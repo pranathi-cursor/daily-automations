@@ -533,15 +533,15 @@ Redacted:    yes
 In the boot hook, materialize it to a file:
 
 ```bash
-mkdir -p /home/agent/.config/gws
-echo "$GWS_CREDENTIALS_JSON" > /home/agent/.config/gws/credentials.json
-chmod 600 /home/agent/.config/gws/credentials.json
+mkdir -p /home/ubuntu/.config/gws
+echo "$GWS_CREDENTIALS_JSON" > /home/ubuntu/.config/gws/credentials.json
+chmod 600 /home/ubuntu/.config/gws/credentials.json
 ```
 
 Set the persistent env var (non-secret config):
 
 ```
-GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/agent/.config/gws/credentials.json
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/ubuntu/.config/gws/credentials.json
 ```
 
 ### Egress allowlist
