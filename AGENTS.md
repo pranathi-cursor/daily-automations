@@ -11,7 +11,8 @@ There is **no application code**, no package manager, no build system, no test f
 
 ## Cursor Cloud specific instructions
 
-- **`gws` (Google Workspace CLI)** is installed at `/usr/local/bin/gws` (v0.22.5). The update script ensures it is present on every VM startup. Usage: `gws <service> <resource> <method> [flags]`. Supports Drive, Gmail, Calendar, Sheets, Docs, Chat, Admin, and more. Run `gws --help` for details. Authentication requires `gws auth login` (OAuth browser flow).
+- **`gws` (Google Workspace CLI)** is installed at `/usr/local/bin/gws` (v0.22.5). The update script installs the binary and writes credentials from secrets on every VM startup. Usage: `gws <service> <resource> <method> [flags]`. Supports Drive, Gmail, Calendar, Sheets, Docs, Chat, Admin, and more. Run `gws --help` for details.
+- **`gws` authentication:** Handled automatically by the update script using two secrets: `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` (path where credentials are written) and `GWS_CREDENTIALS_JSON` (the credential JSON content). No manual `gws auth login` needed when these secrets are set.
 - **No other dependencies to install.** This repo has no `package.json`, `requirements.txt`, `pyproject.toml`, or similar.
 - **No services to start.** The only "application" is the Cursor skill (`.cursor/skills/account-summary-refresh/SKILL.md`), which is executed declaratively by the Cursor agent via MCP servers (Notion, Slack, Databricks SQL). It does not run as a standalone process.
 - **No lint/test/build commands.** Standard development commands (lint, test, build) are not applicable to this repository.
