@@ -74,9 +74,18 @@ databricks:
   salesforce:
     account:     revops.pt_salesforce.account
     opportunity: revops.pt_salesforce.opportunity
+    user:        revops.pt_salesforce.user
 slack:
   internal_workspace_domain: anysphere.slack.com
   enterprise_workspace_domain: anysphere.enterprise.slack.com
+owner:
+  # The ADM these refreshes are written for. Used to filter the Book of Business
+  # data source so we only touch accounts where Pranathi is the ADM (Notion) or
+  # the TAM (Salesforce) — see step 1.
+  name: Pranathi Tupakula
+  email: pranathi@anysphere.co
+  notion_user_id: 2e5d872b-594c-81f6-a518-00029c98377d
+  salesforce_user_id: 005Hr00000ImOPnIAN
 ```
 
 ## Notion column shape (Book of Business)
@@ -126,14 +135,40 @@ If a future variant of this skill needs to notify a human, the destination must 
 
 ## Workflow
 
-### 1. Pull the Book of Business rows
+### 1. Pull the Book of Business rows (filtered to the ADM/TAM)
+
+**Scope rule (READ FIRST):** the underlying Book of Business data source occasionally has rows bulk-imported by a Salesforce-sync pipeline that are not Pranathi's accounts (most often Charlie Lui's T1 outreach book, every row with `Band = "T1"` and `"Account ID"` populated). These rows must NOT be refreshed. The discriminator is membership in the ADM/TAM set:
+
+- **Notion `ADM`** must contain Pranathi's `notion_user_id` (`2e5d872b-594c-81f6-a518-00029c98377d`), **OR**
+- the row's Notion `Account ID` must match a Salesforce account whose `Technical_Account_Manager__c = '005Hr00000ImOPnIAN'` (Pranathi's `salesforce_user_id`).
+
+Most of the time the first condition alone is enough; the SF TAM check is a safety net for any new row that gets added to Notion without an ADM person set.
+
+Step-by-step:
+
+1. **Pull SF Account IDs where Pranathi is TAM** (drives the safety-net filter):
+
+```sql
+-- via execute_sql_read_only on Databricks SQL
+SELECT Id, Name
+FROM revops.pt_salesforce.account
+WHERE Technical_Account_Manager__c = '005Hr00000ImOPnIAN'
+```
+
+2. **Pull Notion rows where ADM = Pranathi OR Account ID is in the TAM set:**
 
 ```sql
 -- via notion-query-data-sources, SQL mode
-SELECT Name, Band, "Up to date", Summary, "Internal Slack", url
+SELECT Name, Band, "Up to date", Summary, "Internal Slack", "Account ID", ADM, url
 FROM "collection://2f4da74e-f045-815f-acce-000b4c32228b"
+WHERE ADM LIKE '%2e5d872b-594c-81f6-a518-00029c98377d%'
+   OR "Account ID" IN ( <comma-separated quoted SF Account IDs from step 1> )
 ORDER BY Band, Name
 ```
+
+If the SF TAM list is empty (or Databricks is unavailable), fall back to the `ADM` clause alone. **Never** query the data source without a scope filter — that re-includes auto-imported accounts and overwrites work for the wrong AE.
+
+3. **Sanity check:** as of 2026-05-26 this filter returns exactly 18 rows (Affirm, Airtable, AppDirect, Benchling, Bending Spoons, Benevity, Brex, Elastic, EToro, Kraken Crypto, Porsche Digital, Scale, SeatGeek, ServiceTitan, Sierra, Vercel, Wex, Whatnot, Zuora). If you get materially more rows than that, inspect the deltas before writing — an auto-import probably leaked back in.
 
 For each row, run steps 2–7. Process accounts sequentially (Notion writes are cheap; LLM synthesis dominates cost).
 
@@ -485,6 +520,7 @@ These were validated on Benchling + Elastic dry-runs. Don't deviate without expl
 17. **Inferring facts the sources don't state**: never fabricate location, identity, timing, or intent. Phone area codes do not tell you a city. Time zones do not tell you a city. First names without an attached domain do not identify a person. Calendar invite subjects tell you what was scheduled, not what happened. If a fact isn't in your gathered sources, leave it out or say "not stated in sources". See the Grounding rule at the top of this skill.
 18. **Citing a row without a source**: every line in the Account Plan's "Last 14 days at a glance" table must have a primary-source cite (Gong call id, Slack permalink, SF activity id, or email Subject+Date). If you can't cite it, you can't include it.
 19. **Inventing Slack channels or DM fallbacks**: a previous run posted "(#internal-account-refresh-bot doesn't exist yet — DM'ing you instead.)". That channel does not and will not exist, and DM'ing the user was never an authorized output. This skill writes ONLY to the two Notion destinations in the "Outputs and write boundary" section — never Slack, never email, never DMs, never a notification channel. Status / progress / errors go to stdout. Full stop.
+20. **Refreshing accounts that aren't Pranathi's (ADM/TAM scope leak)**: the Book of Business data source occasionally has rows bulk-imported by a Salesforce-sync pipeline pushing other reps' books into the same collection (most often Charlie Lui's T1 outreach book — every row with `Band = "T1"` and `"Account ID"` populated, no `ADM` person set, names stuffed with `<Account>\nRenewal <date>\nARR $X`, blank page body, and Salesforce-shape `Champion` / `Risk` / `Stage` / `Current ARR` / `Expansion Potential` / `Days Since Touch` auto-fields). The 2026-05-24 run swept ~27 such rows in and wrote Summaries + Account Plan pages on them before they were trashed by Pranathi. Always filter step 1 by `ADM = Pranathi's notion_user_id` OR `"Account ID"` ∈ (SF accounts where `Technical_Account_Manager__c = Pranathi's salesforce_user_id`). The simple test: if a row has `Band = "T1"` and `Account ID` populated and `ADM` empty, it is NOT in scope.
 
 ## Confirmation before writing
 
