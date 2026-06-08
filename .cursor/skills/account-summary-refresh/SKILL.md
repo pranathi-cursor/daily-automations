@@ -255,24 +255,33 @@ Run all of:
 
 2. **Global Slack search** for `<account_name>` (last 14d). The Slack search tool returns mixed channel + DM hits. Pull the top 50 results.
 
-3. **Search for AE's DMs and group DMs** — `from:@<ae_first_name> <account_name>`. Group DMs surface negotiations.
+3. **Read the ADM↔AE 1:1 DM in full (MANDATORY — do not rely on search alone).** Validated gap: Brex EBR scheduling lived in ADM↔AE DMs but never surfaced in the account Summary because Slack search for `<account_name>` misses threads where the account is discussed by context (e.g. *"let's schedule the EBR"* mid-thread without repeating *Brex*).
 
-4. **Search for the AE's own 1:1 DMs** — search `from:@<ae> <account_name>` AND also pull the AE's 1:1 with the user invoking this skill if relevant. These contain the candid posture commentary that doesn't make it to channels.
+   After step 2 resolves the AE:
+   - `slack_search_users` for the AE by `Owner_Cursor_Email__c` from Salesforce.
+   - `slack_read_channel` with `channel_id: <ae_user_id>`, `oldest: <now-14d>`, `limit: 100`; paginate with `cursor` until the window is exhausted.
+   - Scan **every message** in that DM for: the account name (case-insensitive) or known aliases; and strategic keywords even when the account name is absent — `EBR`, `QBR`, `exec review`, `executive business review`, `onsite`, `roadmap session`, `renewal`, `exec sponsor`.
+   - When a strategic keyword appears without a clear account, use `slack_read_thread` on surrounding context to confirm which account it refers to before including it.
+   - **ADM↔AE coordination on EBR/onsite scheduling is high-priority Summary signal.** It is internal-only (does not flip `Up to date`), but it belongs in the Summary one-liner and Account Plan under strategic motions / next steps — not buried under tactical support threads.
 
-5. **Iterative external-contact discovery (CRITICAL — do not skip):**
+4. **Search for AE's DMs and group DMs** — `from:@<ae_first_name> <account_name>`. Group DMs surface negotiations. Supplementary to step 3, not a substitute.
+
+5. **Search the AE↔ADM DM for account-specific hits** — `in:<@ae_user_id> <account_name>` and `in:<@ae_user_id> EBR` (or `QBR` / `onsite`). Catches what step 3's full read might have ranked below the synthesis cutoff.
+
+6. **Iterative external-contact discovery (CRITICAL — do not skip):**
    - From the first-pass Slack and Gong results, extract every external person name that appears (e.g. "Brent", "Ajay", "Nassim", "Karen").
    - For each name, run `slack_search_users` with just the first name. Slack profile/email-domain filters are unreliable; first-name search is the most consistent way to find connected external Slack users.
    - For each matched user, search for messages and group DMs they participate in within the last 14 days. This is how you find threads like Brent Newton's group DM about the Madrid sessions.
 
-6. **Look at all account-related channels** via `slack_search_channels` patterns:
+7. **Look at all account-related channels** via `slack_search_channels` patterns:
    - `#ext-cursor-<account>`, `#ext-<account>-cursor`
    - `#internal-<account>-*`
    - `#<account>-*`
    - The cross-cutting `#team-field-eng` (often used to recruit FE support for account onsites — was where the Madrid signal first appeared)
 
-7. **Discover keywords iteratively from the first pass.** Topical keywords like `Madrid`, `EBR`, `renewal`, `onsite`, `Q&A` only emerge after the first search. Re-search Slack with these to find adjacent context the account-name-only query missed.
+8. **Discover keywords iteratively from the first pass.** Topical keywords like `Madrid`, `EBR`, `renewal`, `onsite`, `Q&A` only emerge after the first search. Re-search Slack with these to find adjacent context the account-name-only query missed. **Always re-run keyword searches scoped to the ADM↔AE DM** (`in:<@ae_user_id> EBR`, etc.) — not just global search.
 
-8. **Filter Slack hits through the ADM adoption lens** before they reach synthesis. Drop the following classes of messages from the working set — they are noise for an AI Deployment Manager:
+9. **Filter Slack hits through the ADM adoption lens** before they reach synthesis. Drop the following classes of messages from the working set — they are noise for an AI Deployment Manager:
 
    - Bug reports / error reports — patterns like `error`, `500`, `crashed`, `repro`, `stack trace`, `wasn't working`, `broken`, `regressed`, `escalating to eng`, links to Linear/Jira tickets, `cc @<eng-name>` for triage.
    - One-off feature complaints with no rollout impact (e.g. "X is slow today", "Y model gave a bad answer on this prompt").
@@ -485,6 +494,7 @@ These were validated on Benchling + Elastic dry-runs. Don't deviate without expl
 17. **Inferring facts the sources don't state**: never fabricate location, identity, timing, or intent. Phone area codes do not tell you a city. Time zones do not tell you a city. First names without an attached domain do not identify a person. Calendar invite subjects tell you what was scheduled, not what happened. If a fact isn't in your gathered sources, leave it out or say "not stated in sources". See the Grounding rule at the top of this skill.
 18. **Citing a row without a source**: every line in the Account Plan's "Last 14 days at a glance" table must have a primary-source cite (Gong call id, Slack permalink, SF activity id, or email Subject+Date). If you can't cite it, you can't include it.
 19. **Inventing Slack channels or DM fallbacks**: a previous run posted "(#internal-account-refresh-bot doesn't exist yet — DM'ing you instead.)". That channel does not and will not exist, and DM'ing the user was never an authorized output. This skill writes ONLY to the two Notion destinations in the "Outputs and write boundary" section — never Slack, never email, never DMs, never a notification channel. Status / progress / errors go to stdout. Full stop.
+20. **Relying on account-name Slack search instead of reading the ADM↔AE DM**: EBR/onsite scheduling, renewal posture, and exec-engagement planning often happen in ADM↔AE 1:1 DMs without the account name in every message. Step 4.3 requires a full `slack_read_channel` on the AE's user id — searching `Brex` globally is not sufficient. If the Summary omits an in-flight EBR that you know is in AE DMs, this step was skipped or the DM read wasn't paginated through the full 14-day window.
 
 ## Confirmation before writing
 
