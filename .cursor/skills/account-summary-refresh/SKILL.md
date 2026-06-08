@@ -37,7 +37,7 @@ Specifically forbidden inferences:
 - **Location from area codes** — `+1-312-…` does NOT mean Chicago. It means the phone number was issued in the 312 area. People move and keep numbers.
 - **Location from time zones** — `CDT` does NOT mean Chicago. Central time covers a large chunk of the US and the invite could have been scheduled in CT for any reason.
 - **Location from snippet hints** — "see you at the hotel" implies someone traveled, not where. Don't name a city unless it's explicitly written.
-- **Identity from first names** — "Brent said…" without an email or Slack profile attached is ambiguous. Tie names to a domain or profile before using them.
+- **Identity from first names** — "Brent said…" or a sign-off of "Best, Amy" without an email or Slack profile attached is ambiguous. Tie names to a domain or profile before using them. **Never resolve a first name using signal from a different account on the ADM's book** (validated: eToro SF Task signed "Amy" is Amy Butler `amybu@etoro.com`; must not become Amy DeLima `adelima@zuora.com` because Zuora also appears in the working set).
 - **Dates from calendar invite subjects** — an invite titled "@ Mon May 4" tells you the *scheduled* time, not whether the meeting actually happened. Confirm via attendance signal (Gong recording, post-event email, calendar acceptance) before citing it as a completed event.
 - **Account intent from one quote** — a single Slack message or email line is not the customer's posture. Triangulate across ≥2 sources before claiming "they're unhappy with X" or "they want Y firmwide".
 - **Slack channel names that you have not verified** — do not assume `#internal-<x>`, `#account-refresh-bot`, `#ext-<account>`, or any other channel exists. Call `slack_search_channels` and confirm the channel id before referencing it. If it doesn't exist, do not invent a fallback ("DM'ing you instead", "posting to #general") — just do not post.
@@ -255,24 +255,48 @@ Run all of:
 
 2. **Global Slack search** for `<account_name>` (last 14d). The Slack search tool returns mixed channel + DM hits. Pull the top 50 results.
 
-3. **Search for AE's DMs and group DMs** — `from:@<ae_first_name> <account_name>`. Group DMs surface negotiations.
+3. **Read the ADM↔AE 1:1 DM in full (MANDATORY — do not rely on search alone).** Validated gap: Brex EBR scheduling lived in ADM↔AE DMs but never surfaced in the account Summary because Slack search for `<account_name>` misses threads where the account is discussed by context (e.g. *"let's schedule the EBR"* mid-thread without repeating *Brex*).
 
-4. **Search for the AE's own 1:1 DMs** — search `from:@<ae> <account_name>` AND also pull the AE's 1:1 with the user invoking this skill if relevant. These contain the candid posture commentary that doesn't make it to channels.
+   After step 2 resolves the AE:
+   - `slack_search_users` for the AE by `Owner_Cursor_Email__c` from Salesforce.
+   - `slack_read_channel` with `channel_id: <ae_user_id>`, `oldest: <now-14d>`, `limit: 100`; paginate with `cursor` until the window is exhausted.
+   - Scan **every message** in that DM for: the account name (case-insensitive) or known aliases; and strategic keywords even when the account name is absent — `EBR`, `QBR`, `exec review`, `executive business review`, `onsite`, `roadmap session`, `renewal`, `exec sponsor`.
+   - When a strategic keyword appears without a clear account, use `slack_read_thread` on surrounding context to confirm which account it refers to before including it.
+   - **ADM↔AE coordination on EBR/onsite scheduling is high-priority Summary signal.** It is internal-only (does not flip `Up to date`), but it belongs in the Summary one-liner and Account Plan under strategic motions / next steps — not buried under tactical support threads.
 
-5. **Iterative external-contact discovery (CRITICAL — do not skip):**
-   - From the first-pass Slack and Gong results, extract every external person name that appears (e.g. "Brent", "Ajay", "Nassim", "Karen").
-   - For each name, run `slack_search_users` with just the first name. Slack profile/email-domain filters are unreliable; first-name search is the most consistent way to find connected external Slack users.
-   - For each matched user, search for messages and group DMs they participate in within the last 14 days. This is how you find threads like Brent Newton's group DM about the Madrid sessions.
+4. **Search for AE's DMs and group DMs** — `from:@<ae_first_name> <account_name>`. Group DMs surface negotiations. Supplementary to step 3, not a substitute.
 
-6. **Look at all account-related channels** via `slack_search_channels` patterns:
+5. **Search the AE↔ADM DM for account-specific hits** — `in:<@ae_user_id> <account_name>` and `in:<@ae_user_id> EBR` (or `QBR` / `onsite`). Catches what step 3's full read might have ranked below the synthesis cutoff.
+
+6. **Iterative external-contact discovery (CRITICAL — do not skip):**
+   - From the first-pass Slack and Gong results **for this account only**, extract every external person name that appears with a **verified** `@<account-domain>` email, Gong `speaker_map.email`, or Slack profile email on the account's domain. Collect first-name-only mentions separately — they are *candidates*, not confirmed contacts.
+   - For each **confirmed** external (has email on account domain), optionally run `slack_search_users` by full name or email. First-name-only `slack_search_users` is allowed only when followed immediately by the identity gate in step 7 — never promote a first-name match straight into Key contacts.
+   - For each gated contact, search for messages and group DMs they participate in within the last 14 days. This is how you find threads like Brent Newton's group DM about the Madrid sessions.
+
+7. **Account attribution + identity gate (MANDATORY before synthesis).** Apply to every Slack hit, Gong utterance, SF Task/Event, Gmail thread, and Notion meeting note in the working set:
+
+   **Account attribution** — include the row only if at least one of:
+   - The source is scoped to this account (SF `AccountId`, Gong matched via step 3b for this account, Gmail From/To/Cc on `@<account-domain>`).
+   - The message body explicitly names this account or a known alias.
+   - The author has an email on the account's domain (from Gong `speaker_map`, SF email headers, or Slack profile).
+
+   Drop rows from *other* accounts on the ADM's book even if they appeared in a cross-cutting channel (`#team-adm`, ADM↔AE DM discussing multiple customers) or a semantic Slack search.
+
+   **Identity gate** — before any person appears in Summary, Key contacts, or verbatim quotes:
+   - Require **full name + email domain** from the same source row, OR full name + explicit role/company in the same thread (e.g. SF Task `Description` email headers showing `Amy Butler <amybu@etoro.com>`).
+   - **SF Tasks:** never identify a person from the latest reply sign-off alone. Parse the full `Description` for `From:` / `To:` / `Cc:` headers and signature blocks. Truncated snippets like *"Best, Amy"* are not sufficient — read the thread.
+   - **First-name collision:** if multiple people share a first name across accounts (e.g. Amy Butler @ eToro vs Amy DeLima @ Zuora), include only the person whose email domain matches the account under refresh. If domain is not in the source, omit the name or write *"Amy (last name not in source)"* — do not guess.
+   - **Notion meeting notes:** only match parent-page `"<user> and <contact>"` when `<contact>` already passed the identity gate for this account (email on account domain in Gong/Slack/SF for that person).
+
+8. **Look at all account-related channels** via `slack_search_channels` patterns:
    - `#ext-cursor-<account>`, `#ext-<account>-cursor`
    - `#internal-<account>-*`
    - `#<account>-*`
    - The cross-cutting `#team-field-eng` (often used to recruit FE support for account onsites — was where the Madrid signal first appeared)
 
-7. **Discover keywords iteratively from the first pass.** Topical keywords like `Madrid`, `EBR`, `renewal`, `onsite`, `Q&A` only emerge after the first search. Re-search Slack with these to find adjacent context the account-name-only query missed.
+9. **Discover keywords iteratively from the first pass.** Topical keywords like `Madrid`, `EBR`, `renewal`, `onsite`, `Q&A` only emerge after the first search. Re-search Slack with these to find adjacent context the account-name-only query missed. **Always re-run keyword searches scoped to the ADM↔AE DM** (`in:<@ae_user_id> EBR`, etc.) — not just global search.
 
-8. **Filter Slack hits through the ADM adoption lens** before they reach synthesis. Drop the following classes of messages from the working set — they are noise for an AI Deployment Manager:
+10. **Filter Slack hits through the ADM adoption lens** before they reach synthesis. Drop the following classes of messages from the working set — they are noise for an AI Deployment Manager:
 
    - Bug reports / error reports — patterns like `error`, `500`, `crashed`, `repro`, `stack trace`, `wasn't working`, `broken`, `regressed`, `escalating to eng`, links to Linear/Jira tickets, `cc @<eng-name>` for triage.
    - One-off feature complaints with no rollout impact (e.g. "X is slow today", "Y model gave a bad answer on this prompt").
@@ -314,7 +338,7 @@ gws gmail users messages get \
 
 For each hit, capture: `Date`, `From`, `To`, `Cc`, `Subject`, `threadId`, and the API-provided `snippet`. Group by `threadId` so an 8-message negotiation counts as one thread.
 
-**ADM lens filter** (same as Slack — see step 4.8). Drop:
+**ADM lens filter** (same as Slack — see step 4.10). Drop:
 - GitHub / Linear / Jira / monitoring / status-page notifications.
 - Auto-generated mail (calendar invites that are pure ICS, bounce notifications, OOO replies).
 - Internal-only threads where the account name appears but no `@<account>` address is actually in From/To/Cc.
@@ -408,7 +432,7 @@ Page body template:
 ...
 
 ## Key contacts at <Account>
-<bullets of people surfaced from sources; include their role and where they showed up>
+<bullets — full name, email domain, role; only people who passed step 4.7 identity gate>
 
 ## Open threads / blockers
 <bullets>
@@ -478,13 +502,15 @@ These were validated on Benchling + Elastic dry-runs. Don't deviate without expl
 10. **Pagination**: Notion meeting-notes and Slack searches paginate. For 14-day windows, the first page is usually enough; if `has_more=true` on Notion meetings, fetch one more page.
 11. **Account name variants**: "Kraken Crypto" → company is `payward.com`. "EToro" → `etoro.com`. When in doubt, do a quick Salesforce account lookup to get the canonical company name and try common TLDs.
 12. **Do not declare "no signal" until off-Gong scan is done**: a customer with zero Gong calls but active DM negotiations (e.g. through their events lead like Brent Newton) is highly active. Marking them "no signal" because Gong was empty would be wrong.
-13. **Bug reports leaking into the Summary / Account Plan**: this skill is for an AI Deployment Manager focused on broad and deep adoption — not for product support triage. Filter out individual bug reports, error messages, and repro back-and-forth at the Slack-gather step (see step 4.8). Only surface a bug if it has become a rollout-level blocker. The Summary one-liner must never lead with a bug.
+13. **Bug reports leaking into the Summary / Account Plan**: this skill is for an AI Deployment Manager focused on broad and deep adoption — not for product support triage. Filter out individual bug reports, error messages, and repro back-and-forth at the Slack-gather step (see step 4.10). Only surface a bug if it has become a rollout-level blocker. The Summary one-liner must never lead with a bug.
 14. **Treating internal-only Slack chatter as a touch**: a thread between Cursor employees about an account, with no external participant, does NOT flip `Up to date`. The external-participant check matters — verify the author of at least one message in the matched thread belongs to the customer (non-Anysphere email domain, or guest user from the account's workspace). Internal awareness is informational; only external participation is a touch.
 15. **Missing async-only accounts**: an account with zero calls but live commercial coordination (order form, security questionnaire, exec exchange) is highly active. Verify all of Gong + SF Tasks/Events + Slack + Gmail (steps 2, 3b, 4, 4c) were actually queried before declaring `Up to date = __NO__`. SF-only is not enough — non-AE Cursor people corresponding by email is exactly the gap Gmail closes.
 16. **Double-counting AE-logged emails**: if an AE logs an outbound email as a SF `Task` AND that same email lives in Gmail, you'll see both. Dedup by normalized Subject + ±1 day before counting touches (see step 4c dedup section). The combined row should carry both source cites.
 17. **Inferring facts the sources don't state**: never fabricate location, identity, timing, or intent. Phone area codes do not tell you a city. Time zones do not tell you a city. First names without an attached domain do not identify a person. Calendar invite subjects tell you what was scheduled, not what happened. If a fact isn't in your gathered sources, leave it out or say "not stated in sources". See the Grounding rule at the top of this skill.
 18. **Citing a row without a source**: every line in the Account Plan's "Last 14 days at a glance" table must have a primary-source cite (Gong call id, Slack permalink, SF activity id, or email Subject+Date). If you can't cite it, you can't include it.
 19. **Inventing Slack channels or DM fallbacks**: a previous run posted "(#internal-account-refresh-bot doesn't exist yet — DM'ing you instead.)". That channel does not and will not exist, and DM'ing the user was never an authorized output. This skill writes ONLY to the two Notion destinations in the "Outputs and write boundary" section — never Slack, never email, never DMs, never a notification channel. Status / progress / errors go to stdout. Full stop.
+20. **Relying on account-name Slack search instead of reading the ADM↔AE DM**: EBR/onsite scheduling, renewal posture, and exec-engagement planning often happen in ADM↔AE 1:1 DMs without the account name in every message. Step 4.3 requires a full `slack_read_channel` on the AE's user id — searching `Brex` globally is not sufficient. If the Summary omits an in-flight EBR that you know is in AE DMs, this step was skipped or the DM read wasn't paginated through the full 14-day window.
+21. **First-name collision across accounts on the same book**: eToro SF Task `00TV400001ILHavMAH` ends with *"Best, Amy"* but the thread is Amy Butler (`amybu@etoro.com`), not Amy DeLima (`adelima@zuora.com`). Promoting a first-name sign-off without parsing full SF `Description` headers, or resolving "Amy" using Zuora Gong/Slack context, produces wrong Key contacts. Step 4.7 identity gate is mandatory; when domain is ambiguous, omit the name.
 
 ## Confirmation before writing
 
